@@ -1,0 +1,6 @@
+name: Novia-Clan
+version: '1.0'
+main: de.qirdpdms.noviaclan.Main
+api-version: '1.18'
+commands:
+  clan:
