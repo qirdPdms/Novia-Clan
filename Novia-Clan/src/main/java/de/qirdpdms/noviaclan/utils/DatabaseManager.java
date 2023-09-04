@@ -1,12 +1,15 @@
 package de.qirdpdms.noviaclan.utils;
 
 import de.qirdpdms.noviaclan.Main;
+import net.md_5.bungee.api.ChatColor;
+import net.md_5.bungee.api.chat.ClickEvent;
+import net.md_5.bungee.api.chat.TextComponent;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
+import org.bukkit.scheduler.BukkitRunnable;
 
 import java.sql.*;
-import java.util.HashMap;
-import java.util.UUID;
+import java.util.*;
 
 public class DatabaseManager {
 
@@ -18,19 +21,23 @@ public class DatabaseManager {
     private final String username;
     private final String password;
 
+    private final String prefix;
+
     private final FileConfiguration config;
 
+    private final Main plugin;
+
     public DatabaseManager(Main plugin) {
-        // Lade die Konfiguration aus der config.yml
+        this.plugin = plugin;
         plugin.saveDefaultConfig();
         config = plugin.getConfig();
 
-        // Verwende die in der Konfiguration definierten Datenbank-Einstellungen
         host = config.getString("database.host");
         port = config.getString("database.port");
         database = config.getString("database.name");
         username = config.getString("database.username");
         password = config.getString("database.password");
+        prefix = ChatColor.translateAlternateColorCodes('&', config.getString("prefix"));
 
         initializeDatabase();
     }
@@ -42,14 +49,12 @@ public class DatabaseManager {
                 password
         );
 
-        // Hier überprüfen, ob die Tabellen existieren, und sie erstellen, wenn nicht
         createTablesIfNotExist(connection);
 
         return connection;
     }
 
     private void createTablesIfNotExist(Connection connection) throws SQLException {
-        // Überprüfe, ob die clan-Tabelle existiert, und erstelle sie, wenn nicht
         if (!doesTableExist(connection, "clan")) {
             String createClanTableQuery = "CREATE TABLE IF NOT EXISTS clan (" +
                     "id INT AUTO_INCREMENT PRIMARY KEY," +
@@ -59,7 +64,7 @@ public class DatabaseManager {
                     "clanplayer TEXT," +
                     "clanränge TEXT," +
                     "clanbank DOUBLE," +
-                    "clanverify BOOLEAN" +  // Removed the comma here
+                    "clanverify BOOLEAN" +
                     ")";
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate(createClanTableQuery);
@@ -70,14 +75,12 @@ public class DatabaseManager {
         }
 
 
-
-        // Überprüfe, ob die clan_player-Tabelle existiert, und erstelle sie, wenn nicht
         if (!doesTableExist(connection, "clan_player")) {
             String createClanPlayerTableQuery = "CREATE TABLE IF NOT EXISTS clan_player (" +
                     "id INT AUTO_INCREMENT PRIMARY KEY," +
                     "uuid VARCHAR(36) NOT NULL," +
                     "spielername VARCHAR(255) NOT NULL," +
-                    "clan VARCHAR(255)" +  // Removed the comma here
+                    "clan VARCHAR(255)" +
                     ")";
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate(createClanPlayerTableQuery);
@@ -97,7 +100,6 @@ public class DatabaseManager {
 
     private void initializeDatabase() {
         try (Connection connection = getConnection()) {
-            // Hier ggf. weitere Initialisierungsschritte ausführen
         } catch (SQLException e) {
             e.printStackTrace();
         }
@@ -109,12 +111,12 @@ public class DatabaseManager {
             try (PreparedStatement statement = connection.prepareStatement(query)) {
                 statement.setString(1, uuid.toString());
                 try (ResultSet resultSet = statement.executeQuery()) {
-                    return resultSet.next(); // Gibt true zurück, wenn der Spieler gefunden wurde, andernfalls false.
+                    return resultSet.next();
                 }
             }
         } catch (SQLException e) {
             e.printStackTrace();
-            return false; // Bei Fehlern wird auch false zurückgegeben.
+            return false;
         }
     }
 
@@ -136,41 +138,37 @@ public class DatabaseManager {
     }
 
     public boolean registerClan(Player player, String clanName, String clanTag, String clanCreatorName) {
-        if (clanExists(clanName)) {
-            player.sendMessage("§b§lSuchtMc §8§l» §bClan ist breits vergeben.");
+        if (isPlayerInClan(player.getUniqueId())) {
+            player.sendMessage(prefix + "§bDu bist bereits in einem Clan");
             return true;
         }
 
-        if (isPlayerInClan(player.getUniqueId())) {
-            player.sendMessage("§b§lSuchtMc §8§l» §bDu bist bereits in einem Clan.");
+
+        if (clanTag.length() > 4) {
+            player.sendMessage(prefix + "§cDer Clan-Tag darf nicht mehr als 4 Zeichen haben.");
             return true;
         }
 
         try (Connection connection = getConnection()) {
-            String query = "INSERT INTO clan (clanname, clantag, clancreator, clanplayer, clanränge, clanbank) VALUES (?, ?, ?, ?, ?, ?)";
+            String query = "INSERT INTO clan (clanname, clantag, clancreator, clanplayer, clanränge, clanbank, clanverify) VALUES (?, ?, ?, ?, ?, ?, ?)";
             try (PreparedStatement statement = connection.prepareStatement(query, Statement.RETURN_GENERATED_KEYS)) {
                 statement.setString(1, clanName);
                 statement.setString(2, clanTag);
                 statement.setString(3, clanCreatorName);
-                statement.setString(4, player.getName()); // Spielername anstelle von UUID
-                statement.setString(5, "Gründer, Moderator, Mitglied"); // Standard-Ränge
-                statement.setDouble(6, 0.0); // Clanbank mit Stand 0
-                statement.executeUpdate(); // Fügt den Clan zur Datenbank hinzu.
+                statement.setString(4, player.getName());
+                statement.setString(5, "Gründer, Moderator, Mitglied");
+                statement.setDouble(6, 0.0);
+                statement.setInt(7, 0);
+                updateClan(clanName, player.getUniqueId().toString());
+                statement.executeUpdate();
 
-                try (ResultSet generatedKeys = statement.getGeneratedKeys()) {
-                    if (generatedKeys.next()) {
-                        String generatedClanName = generatedKeys.getString(1);
 
-                        // Aktualisiere den Clan-Namen des Clan Creators
-                        updateClan(generatedClanName, player.getName());
-                    }
-                }
             }
+            player.sendMessage(prefix + "§eDein Clan §b" + clanName + " §emit dem Tag §b" + clanTag + " §ewurde erfolgreich erstellt!");
+            return true;
         } catch (SQLException e) {
             e.printStackTrace();
         }
-
-        // Clan wurde erfolgreich erstellt
         return false;
     }
 
@@ -193,12 +191,12 @@ public class DatabaseManager {
             try (PreparedStatement statement = connection.prepareStatement(query)) {
                 statement.setString(1, clanName);
                 try (ResultSet resultSet = statement.executeQuery()) {
-                    return resultSet.next(); // Gibt true zurück, wenn der Clan gefunden wurde, andernfalls false.
+                    return resultSet.next();
                 }
             }
         } catch (SQLException e) {
             e.printStackTrace();
-            return false; // Bei Fehlern wird auch false zurückgegeben.
+            return false;
         }
     }
 
@@ -210,7 +208,7 @@ public class DatabaseManager {
                 try (ResultSet resultSet = statement.executeQuery()) {
                     if (resultSet.next()) {
                         String clanName = resultSet.getString("clan");
-                        return clanName != null && !clanName.isEmpty(); // Spieler ist in einem Clan, wenn clan nicht null oder leer ist
+                        return clanName != null && !clanName.isEmpty();
                     }
                 }
             }
@@ -227,61 +225,64 @@ public class DatabaseManager {
         String senderClan = getClanName(senderUUID);
 
         if (senderClan == null) {
-            sender.sendMessage("§b§lSuchtMc §8§l» §eDu bist in keinem Clan und kannst daher niemanden einladen.");
+            sender.sendMessage(prefix + "§eDu bist in keinem Clan und kannst daher niemanden einladen.");
             return;
         }
 
-        // Überprüfe, ob der Sender der Clan-Creator des Clans ist
-        if (!isClanCreator(sender.getName(), senderClan)) {
-            sender.sendMessage("§b§lSuchtMc §8§l» §bDu bist nicht der Clan-Creator deines Clans und kannst daher niemanden einladen.");
+        if (isClanCreator(sender.getName(), senderClan)) {
+            System.out.println("DEBUG: Der Spieler " + sender.getName() + " ist nicht der Clan-Creator des Clans " + senderClan);
+            sender.sendMessage(prefix + "§bDu bist nicht der Clan-Creator deines Clans und kannst daher niemanden einladen.");
             return;
         }
 
-        // Überprüfe, ob der Spieler bereits eine Einladung erhalten hat
         if (clanInvitations.containsKey(invitedPlayerUUID)) {
-            sender.sendMessage("§b§lSuchtMc §8§l» §eDer Spieler hat bereits eine Einladung erhalten.");
+            sender.sendMessage(prefix + "§eDer Spieler hat bereits eine Einladung erhalten.");
             return;
         }
 
-        // Speichere die Einladung in der HashMap
         clanInvitations.put(invitedPlayerUUID, senderUUID);
 
-        // Sende eine Einladungsnachricht an den eingeladenen Spieler
-        invitedPlayer.sendMessage("§b§lSuchtMc §8§l» §eDu wurdest in den Clan von " + clanName + " eingeladen. Akzeptiere mit /clan accept.");
-        sender.sendMessage("§b§lSuchtMc §8§l» §eDie Einladung an " + invitedPlayer.getName() + " wurde verschickt.");
+        TextComponent acceptButton = createAcceptButton();
+
+        TextComponent message = new TextComponent(prefix + "§eDu wurdest in den Clan " + clanName + " eingeladen ");
+        message.addExtra("§7[§a");
+        message.addExtra(acceptButton);
+        message.addExtra("§7]");
+
+        invitedPlayer.spigot().sendMessage(message);
+
+        sender.sendMessage(prefix + "§eDie Einladung an " + invitedPlayer.getName() + " wurde verschickt.");
     }
 
     public void acceptInvitation(Player invitedPlayer, Player player) {
         UUID invitedPlayerUUID = invitedPlayer.getUniqueId();
 
-        // Überprüfe, ob der Spieler eine Einladung erhalten hat
         if (!clanInvitations.containsKey(invitedPlayerUUID)) {
-            invitedPlayer.sendMessage("§b§lSuchtMc §8§l» §eDu hast keine ausstehenden Einladungen.");
+            invitedPlayer.sendMessage(prefix + "§eDu hast keine ausstehenden Einladungen.");
             return;
         }
 
-        // Füge den Spieler dem Clan hinzu
+
         UUID senderUUID = clanInvitations.get(invitedPlayerUUID);
-        String clanName = getClanName(senderUUID); // Hole den Clan-Namen des Einladenden
+        String clanName = getClanName(senderUUID);
 
         if (clanName != null && !clanName.isEmpty()) {
-            // Überprüfe, ob der Spieler bereits einem Clan angehört
             if (isPlayerInClan(invitedPlayerUUID)) {
-                invitedPlayer.sendMessage("§b§lSuchtMc §8§l» §eDu bist bereits Mitglied eines Clans.");
+                invitedPlayer.sendMessage(prefix + "§eDu bist bereits Mitglied eines Clans.");
                 return;
             }
 
-            boolean success = addToClan(player, clanName, invitedPlayerUUID);
+            boolean success = addToClan(invitedPlayer, clanName, invitedPlayerUUID);
 
             if (success) {
-                invitedPlayer.sendMessage("§b§lSuchtMc §8§l» §eDu hast erfolgreich den Clan " + clanName + " beigetreten.");
+                invitedPlayer.sendMessage(prefix + "§eDu hast erfolgreich den Clan " + clanName + " beigetreten.");
                 clanInvitations.remove(invitedPlayerUUID);
                 updateClan(clanName, invitedPlayerUUID.toString());
             } else {
-                invitedPlayer.sendMessage("§b§lSuchtMc §8§l» §bFehler beim Beitritt zum Clan " + clanName + ".");
+                invitedPlayer.sendMessage(prefix + "§bFehler beim Beitritt zum Clan " + clanName + ".");
             }
         } else {
-            invitedPlayer.sendMessage("§b§lSuchtMc §8§l» §bFehler beim Beitritt zum Clan.");
+            invitedPlayer.sendMessage(prefix + "§bFehler beim Beitritt zum Clan.");
         }
     }
 
@@ -302,18 +303,18 @@ public class DatabaseManager {
         } catch (SQLException e) {
             e.printStackTrace();
         }
-        return null; // Wenn der Clan-Name "null" ist oder nicht gefunden wurde, wird null zurückgegeben.
+        return null;
     }
 
-    private boolean isClanCreator(String playerName, String clanName) {
+    public boolean isClanCreator(String clanName, String playerName) {
         try (Connection connection = getConnection()) {
             String query = "SELECT clancreator FROM clan WHERE clanname = ?";
             try (PreparedStatement statement = connection.prepareStatement(query)) {
                 statement.setString(1, clanName);
                 try (ResultSet resultSet = statement.executeQuery()) {
                     if (resultSet.next()) {
-                        String clanCreatorName = resultSet.getString("clancreator");
-                        return playerName.equals(clanCreatorName);
+                        String clanCreator = resultSet.getString("clancreator");
+                        return playerName.equals(clanCreator);
                     }
                 }
             }
@@ -322,57 +323,82 @@ public class DatabaseManager {
         }
         return false;
     }
+    public String getClanCreator(String clanName) {
+        try (Connection connection = getConnection()) {
+            String query = "SELECT clancreator FROM clan WHERE clanname = ?";
+            try (PreparedStatement statement = connection.prepareStatement(query)) {
+                statement.setString(1, clanName);
+                try (ResultSet resultSet = statement.executeQuery()) {
+                    if (resultSet.next()) {
+                        return resultSet.getString("clancreator");
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return null; // Rückgabe null, wenn der Clan-Ersteller nicht gefunden wurde
+    }
     public boolean addToClan(Player player, String clanName, UUID playerUUID) {
-        // Prüfe, ob der Clan existiert
+
         if (!clanExists(clanName)) {
-            return false; // Der Clan existiert nicht
+            return false;
         }
 
         if (isPlayerInClan(playerUUID)) {
-            return false; // Der Spieler ist bereits Mitglied eines Clans
+            return false;
         }
 
         try (Connection connection = getConnection()) {
-            // Überprüfe, ob der Spieler bereits einem Clan angehört
+
             if (isPlayerInClan(playerUUID)) {
-                return false; // Der Spieler ist bereits Mitglied eines Clans
+                return false;
             }
 
-            // Füge den Spieler zur Liste der Clanmitglieder hinzu
             String query = "UPDATE clan SET clanplayer = CONCAT(clanplayer, ', ', ?) WHERE clanname = ?";
             try (PreparedStatement statement = connection.prepareStatement(query)) {
                 statement.setString(1, player.getName());
                 statement.setString(2, clanName);
                 statement.executeUpdate();
 
-                return true; // Erfolgreich dem Clan hinzugefügt
+                return true;
             }
         } catch (SQLException e) {
             e.printStackTrace();
-            return false; // Bei einem Fehler wird false zurückgegeben
+            return false;
         }
     }
-    public void leaveClan(UUID playerUUID) {
-        // Überprüfe, ob der Spieler einem Clan angehört
+    public boolean leaveClan(UUID playerUUID, Player player) {
         if (!isPlayerInClan(playerUUID)) {
-            return; // Der Spieler ist in keinem Clan
+            return false;
         }
 
         try (Connection connection = getConnection()) {
-            // Hole den aktuellen Clan des Spielers
             String currentClan = getClanName(playerUUID);
 
-            if (currentClan != null) {
-                // Entferne den Spieler aus der Clan-Tabelle
-                String query = "UPDATE clan SET clanplayer = REPLACE(clanplayer, ?, '') WHERE clanname = ?";
-                try (PreparedStatement statement = connection.prepareStatement(query)) {
-                    statement.setString(1, playerUUID.toString());
-                    statement.setString(2, currentClan);
-                    statement.executeUpdate();
-                }
+            if (isClanCreator(currentClan, player.getName())) {
+                player.sendMessage(prefix + "§eDu bist der Clan-Ersteller. Wenn du deinen Clan auflösen möchtest, gib /clan auflösen ein.");
+                return true;
             }
 
-            // Setze den Clan des Spielers auf null, um ihn aus dem Clan in der clan_player-Tabelle zu entfernen
+            if (currentClan != null) {
+                List<String> clanMembers = getClanPlayers(currentClan);
+                clanMembers.remove(player.getName());
+                String clanMembersString = String.join(", ", clanMembers);
+
+                String query = "UPDATE clan SET clanplayer = ? WHERE clanname = ?";
+                try (PreparedStatement statement = connection.prepareStatement(query)) {
+                    statement.setString(1, clanMembersString);
+                    statement.setString(2, currentClan);
+                    statement.executeUpdate();
+
+                }
+                player.sendMessage(prefix + "§eDu hast deinen Clan verlassen.");
+
+
+
+            }
+
             String updateQuery = "UPDATE clan_player SET clan = null WHERE uuid = ?";
             try (PreparedStatement updateStatement = connection.prepareStatement(updateQuery)) {
                 updateStatement.setString(1, playerUUID.toString());
@@ -381,6 +407,30 @@ public class DatabaseManager {
         } catch (SQLException e) {
             e.printStackTrace();
         }
+        return false;
+    }
+    public List<String> getClanPlayers(String clanName) {
+        List<String> clanPlayers = new ArrayList<>();
+
+        try (Connection connection = getConnection()) {
+            String query = "SELECT clanplayer FROM clan WHERE clanname = ?";
+            try (PreparedStatement statement = connection.prepareStatement(query)) {
+                statement.setString(1, clanName);
+                try (ResultSet resultSet = statement.executeQuery()) {
+                    if (resultSet.next()) {
+                        String clanPlayerString = resultSet.getString("clanplayer");
+                        if (clanPlayerString != null && !clanPlayerString.isEmpty()) {
+                            String[] clanPlayerArray = clanPlayerString.split(",");
+                            clanPlayers.addAll(Arrays.asList(clanPlayerArray));
+                        }
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+
+        return clanPlayers;
     }
     public String getClanInfo(String clanName) {
         try (Connection connection = getConnection()) {
@@ -393,7 +443,7 @@ public class DatabaseManager {
                         String clanCreator = resultSet.getString("clancreator");
                         String clanPlayers = resultSet.getString("clanplayer");
                         double clanBank = resultSet.getDouble("clanbank");
-                        boolean clanVerify = resultSet.getBoolean("clanverify"); // Holen Sie den Wert des clanverify-Felds
+                        boolean clanVerify = resultSet.getBoolean("clanverify");
 
                         StringBuilder clanInfo = new StringBuilder();
                         clanInfo.append("§eClan Name: §b").append(clanName).append("\n");
@@ -402,7 +452,6 @@ public class DatabaseManager {
                         clanInfo.append("§eClan Players: §b").append(clanPlayers).append("\n");
                         clanInfo.append("§eClan Bank: §b").append(clanBank).append("\n");
 
-                        // Überprüfen Sie den Wert von clanVerify und fügen Sie die entsprechende Nachricht hinzu
                         if (clanVerify) {
                             clanInfo.append("Clan Status: Verifiziert\n");
                         } else {
@@ -417,8 +466,9 @@ public class DatabaseManager {
             e.printStackTrace();
         }
 
-        return null; // Wenn der Clan nicht gefunden wird, wird null zurückgegeben.
+        return null;
     }
+
     public boolean setClanVerificationStatus(String clanName, boolean isVerified) {
         try (Connection connection = getConnection()) {
             String updateQuery = "UPDATE clan SET clanverify = ? WHERE clanname = ?";
@@ -426,48 +476,118 @@ public class DatabaseManager {
                 statement.setBoolean(1, isVerified);
                 statement.setString(2, clanName);
                 int rowsUpdated = statement.executeUpdate();
-                return rowsUpdated > 0; // Gibt true zurück, wenn mindestens eine Zeile aktualisiert wurde.
+                return rowsUpdated > 0;
             }
         } catch (SQLException e) {
             e.printStackTrace();
-            return false; // Bei Fehlern wird false zurückgegeben.
+            return false;
         }
     }
 
     public boolean deleteClan(String clanName) {
         if (!clanExists(clanName)) {
-            return false; // Der Clan existiert nicht
+            return false;
         }
 
         try (Connection connection = getConnection()) {
-            connection.setAutoCommit(false); // Deaktivieren der automatischen Commit-Funktion
+            connection.setAutoCommit(false);
 
             try {
-                // Setze den Clan der Mitglieder auf null
                 String updateQuery = "UPDATE clan_player SET clan = null WHERE clan = ?";
                 try (PreparedStatement updateStatement = connection.prepareStatement(updateQuery)) {
                     updateStatement.setString(1, clanName);
                     updateStatement.executeUpdate();
                 }
 
-                // Lösche den Clan aus der Datenbank
                 String deleteQuery = "DELETE FROM clan WHERE clanname = ?";
                 try (PreparedStatement deleteStatement = connection.prepareStatement(deleteQuery)) {
                     deleteStatement.setString(1, clanName);
                     deleteStatement.executeUpdate();
                 }
 
-                connection.commit(); // Commit der Transaktion
-                return true; // Erfolgreich gelöscht
+                connection.commit();
+                return true;
             } catch (SQLException e) {
-                connection.rollback(); // Rollback bei einem Fehler
+                connection.rollback();
                 e.printStackTrace();
-                return false; // Bei einem Fehler wird false zurückgegeben
+                return false;
             }
         } catch (SQLException e) {
             e.printStackTrace();
-            return false; // Bei einem Fehler beim Verbindungsaufbau wird false zurückgegeben
+            return false;
         }
+    }
+
+    public boolean withdrawFromClanBank(String clanName, double amount) {
+        try (Connection connection = getConnection()) {
+            String updateQuery = "UPDATE clan SET clanbank = clanbank - ? WHERE clanname = ?";
+            try (PreparedStatement statement = connection.prepareStatement(updateQuery)) {
+                statement.setDouble(1, amount);
+                statement.setString(2, clanName);
+                int rowsUpdated = statement.executeUpdate();
+                return rowsUpdated > 0;
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    public boolean depositToClanBank(String clanName, double amount) {
+        try (Connection connection = getConnection()) {
+            String updateQuery = "UPDATE clan SET clanbank = clanbank + ? WHERE clanname = ?";
+            try (PreparedStatement statement = connection.prepareStatement(updateQuery)) {
+                statement.setDouble(1, amount);
+                statement.setString(2, clanName);
+                int rowsUpdated = statement.executeUpdate();
+                return rowsUpdated > 0;
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    public double getClanBankBalance(String clanName) {
+        try (Connection connection = getConnection()) {
+            String query = "SELECT clanbank FROM clan WHERE clanname = ?";
+            try (PreparedStatement statement = connection.prepareStatement(query)) {
+                statement.setString(1, clanName);
+                try (ResultSet resultSet = statement.executeQuery()) {
+                    if (resultSet.next()) {
+                        return resultSet.getDouble("clanbank");
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return 0.0;
+    }
+
+
+    public TextComponent createAcceptButton() {
+        TextComponent acceptText = new TextComponent("Annehmen");
+        acceptText.setColor(ChatColor.GREEN);
+        acceptText.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/clan accept"));
+        return acceptText;
+    }
+
+    public String getPlayerName(UUID playerUUID) {
+        try (Connection connection = getConnection()) {
+            String query = "SELECT spielername FROM clan_player WHERE uuid = ?";
+            try (PreparedStatement statement = connection.prepareStatement(query)) {
+                statement.setString(1, playerUUID.toString());
+                try (ResultSet resultSet = statement.executeQuery()) {
+                    if (resultSet.next()) {
+                        return resultSet.getString("spielername");
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return null;
     }
 
 

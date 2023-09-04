@@ -2,3 +2,4 @@ de\qirdpdms\noviaclan\listener\JoinListener.class
 de\qirdpdms\noviaclan\utils\DatabaseManager.class
 de\qirdpdms\noviaclan\commands\clanCommand.class
 de\qirdpdms\noviaclan\Main.class
+de\qirdpdms\noviaclan\commands\clanCommand$1.class

@@ -4,3 +4,5 @@ database:
   name: Datenbankname
   username: root
   password: passwort
+
+prefix: "&a[MeinClan]&r "
